@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# mpipc : C compiler wrapper for the MPI progress pass
+
+set -euo pipefail
+
+CLANG_BIN="${MPI_PROGRESS_CC:-@MPI_PROGRESS_CLANG@}"
+
+PLUGIN_PATH="@MPI_PROGRESS_PLUGIN_PATH@"
+RUNTIME_DIR="@MPI_PROGRESS_RUNTIME_DIR@"
+
+if [[ ! -f "${PLUGIN_PATH}" ]]; then
+  echo "mpipc error: pass plugin not found at ${PLUGIN_PATH}" >&2
+  exit 1
+fi
+
+MPI_COMPILE_ARGS=( @MPIP_C_COMPILE_ARGS_SH@ )
+MPI_LINK_ARGS=( @MPIP_C_LINK_ARGS_SH@ )
+
+PLUGIN_ARGS=( "-fpass-plugin=${PLUGIN_PATH}" )
+RUNTIME_LINK_ARGS=( "-Wl,--no-as-needed" "-L${RUNTIME_DIR}" "-Wl,-rpath,${RUNTIME_DIR}" "-lmpiprogress" )
+
+compile_only=0
+preprocess_only=0
+assemble_only=0
+has_source=0
+saw_opt=0
+show_cmd=0
+
+USER_ARGS=()
+
+for arg in "$@"; do
+  case "${arg}" in
+    --mpip-show)
+      show_cmd=1
+      ;;
+
+    -c)
+      compile_only=1
+      USER_ARGS+=( "${arg}" )
+      ;;
+
+    -E)
+      preprocess_only=1
+      USER_ARGS+=( "${arg}" )
+      ;;
+
+    -S)
+      assemble_only=1
+      USER_ARGS+=( "${arg}" )
+      ;;
+
+    *.c)
+      has_source=1
+      USER_ARGS+=( "${arg}" )
+      ;;
+
+    -O0)
+      saw_opt=1
+      USER_ARGS+=( "-O1" "-flto" )
+      ;;
+
+    -O|-O1|-O2|-O3|-Ofast|-Og|-Os|-Oz)
+      saw_opt=1
+      USER_ARGS+=( "${arg}" "-flto" )
+      ;;
+
+    *)
+      USER_ARGS+=( "${arg}" )
+      ;;
+  esac
+done
+
+# Keep the MDMP-style behaviour: if no optimisation level was supplied,
+# force a minimally useful optimisation level and LTO.
+if (( ! saw_opt )); then
+  USER_ARGS=( "-O1" "-flto" "${USER_ARGS[@]}" )
+fi
+
+LTO_LINK_ARGS=()
+for arg in "${USER_ARGS[@]}"; do
+  if [[ "${arg}" == "-flto"* ]]; then
+    LTO_LINK_ARGS=( "-fuse-ld=lld" "-Wl,--load-pass-plugin=${PLUGIN_PATH}" )
+    break
+  fi
+done
+
+execute() {
+  if (( show_cmd )); then
+    echo -e "\033[1;36m[mpipc]\033[0m Executing:" >&2
+    printf '%q ' "$@" >&2
+    echo >&2
+  fi
+  exec "$@"
+}
+
+# Preprocess only
+if (( preprocess_only )); then
+  execute "${CLANG_BIN}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
+fi
+
+# Compile or assemble only
+if (( compile_only || assemble_only )); then
+  execute "${CLANG_BIN}" "${PLUGIN_ARGS[@]}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
+fi
+
+# Compile+link from source
+if (( has_source )); then
+  execute "${CLANG_BIN}" \
+    "${PLUGIN_ARGS[@]}" \
+    "${MPI_COMPILE_ARGS[@]}" \
+    "${USER_ARGS[@]}" \
+    "${MPI_LINK_ARGS[@]}" \
+    "${RUNTIME_LINK_ARGS[@]}" \
+    "${LTO_LINK_ARGS[@]}"
+fi
+
+# Link-only invocation, e.g. wrapper used on .o files
+execute "${CLANG_BIN}" \
+  "${PLUGIN_ARGS[@]}" \
+  "${USER_ARGS[@]}" \
+  "${MPI_LINK_ARGS[@]}" \
+  "${RUNTIME_LINK_ARGS[@]}" \
+  "${LTO_LINK_ARGS[@]}"
+
