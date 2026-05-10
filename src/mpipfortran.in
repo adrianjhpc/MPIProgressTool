@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# mpipc : C compiler wrapper for the MPI progress pass
+# mpipfortran : Fortran compiler wrapper for the MPI progress pass
+# Uses flang/flang-new via CMAKE_Fortran_COMPILER
 
 set -euo pipefail
 
-CC_BIN="${MPI_PROGRESS_CC:-@MPI_PROGRESS_CLANG@}"
+FC_BIN="${MPI_PROGRESS_FC:-@MPI_PROGRESS_FLANG@}"
 
 PLUGIN_PATH="@MPI_PROGRESS_PLUGIN_PATH@"
 RUNTIME_DIR="@MPI_PROGRESS_RUNTIME_DIR@"
 
 if [[ ! -f "${PLUGIN_PATH}" ]]; then
-  echo "mpipc error: pass plugin not found at ${PLUGIN_PATH}" >&2
+  echo "mpipfortran error: pass plugin not found at ${PLUGIN_PATH}" >&2
   exit 1
 fi
 
-MPI_COMPILE_ARGS=( @MPIAP_C_COMPILE_ARGS_SH@ )
-MPI_LINK_ARGS=( @MPIAP_C_LINK_ARGS_SH@ )
+MPI_COMPILE_ARGS=( @MPIAP_FORTRAN_COMPILE_ARGS_SH@ )
+MPI_LINK_ARGS=( @MPIAP_FORTRAN_LINK_ARGS_SH@ )
 
 PLUGIN_ARGS=( "-fpass-plugin=${PLUGIN_PATH}" )
-RUNTIME_LINK_ARGS=( "-Wl,--no-as-needed" "-L${RUNTIME_DIR}" "-Wl,-rpath,${RUNTIME_DIR}" "-lmpiprogress" )
+LINK_RUNTIME_ARGS=( "-Wl,--no-as-needed" "-L${RUNTIME_DIR}" "-Wl,-rpath,${RUNTIME_DIR}" "-lmpiprogress" )
 
 compile_only=0
 preprocess_only=0
@@ -45,7 +46,7 @@ for arg in "$@"; do
       assemble_only=1
       USER_ARGS+=( "${arg}" )
       ;;
-    *.c)
+    *.f|*.F|*.f90|*.F90|*.f95|*.F95|*.f03|*.F03|*.f08|*.F08)
       has_source=1
       USER_ARGS+=( "${arg}" )
       ;;
@@ -77,7 +78,7 @@ done
 
 execute() {
   if (( show_cmd )); then
-    echo -e "\033[1;36m[mpipc]\033[0m Executing:" >&2
+    echo -e "\033[1;36m[mpipfortran]\033[0m Executing:" >&2
     printf '%q ' "$@" >&2
     echo >&2
   fi
@@ -85,27 +86,27 @@ execute() {
 }
 
 if (( preprocess_only )); then
-  execute "${CC_BIN}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
+  execute "${FC_BIN}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
 fi
 
 if (( compile_only || assemble_only )); then
-  execute "${CC_BIN}" "${PLUGIN_ARGS[@]}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
+  execute "${FC_BIN}" "${PLUGIN_ARGS[@]}" "${MPI_COMPILE_ARGS[@]}" "${USER_ARGS[@]}"
 fi
 
 if (( has_source )); then
-  execute "${CC_BIN}" \
+  execute "${FC_BIN}" \
     "${PLUGIN_ARGS[@]}" \
     "${MPI_COMPILE_ARGS[@]}" \
     "${USER_ARGS[@]}" \
     "${MPI_LINK_ARGS[@]}" \
-    "${RUNTIME_LINK_ARGS[@]}" \
+    "${LINK_RUNTIME_ARGS[@]}" \
     "${LTO_LINK_ARGS[@]}"
 fi
 
-execute "${CC_BIN}" \
+execute "${FC_BIN}" \
   "${PLUGIN_ARGS[@]}" \
   "${USER_ARGS[@]}" \
   "${MPI_LINK_ARGS[@]}" \
-  "${RUNTIME_LINK_ARGS[@]}" \
+  "${LINK_RUNTIME_ARGS[@]}" \
   "${LTO_LINK_ARGS[@]}"
 
